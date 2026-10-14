@@ -25,9 +25,11 @@ When it is up:
 | Temporal server (gRPC, used by the worker and starter) | `localhost:7233` |
 | Temporal Web UI | http://localhost:8080 |
 
-### Run the sample
+### Run the prospecting agent on Temporal
 
-`runFlowAgent` calls Gemini (`gemini-2.5-flash`) through Google ADK on Vertex AI. Set these environment variables in the terminal that runs the worker, and authenticate with `gcloud auth application-default login`. Project and location:
+Start the worker first, then the starter. Clone this repo into a separate directory from `docker-compose`. The Temporal server from the previous step must still be running.
+
+**Setup (once per terminal).** `runFlowAgent` calls Gemini (`gemini-2.5-flash`) through Google ADK on Vertex AI. Run `gcloud auth application-default login` **before starting the worker**; the worker can only call Vertex AI with credentials that exist when it starts. Then export these variables in **both** terminals:
 
 ```bash
 export GOOGLE_GENAI_USE_VERTEXAI=true
@@ -35,32 +37,57 @@ export GOOGLE_CLOUD_PROJECT=internal-468309
 export GOOGLE_CLOUD_LOCATION=us-east4
 ```
 
-If the call fails, the workflow ends in `FAILED`, so the Temporal flow is still visible.
-
-Use two terminals, starting from the root of this repo (clone it into a separate directory from `docker-compose`):
+**Step 1: start the worker (terminal 1).** It connects to `localhost:7233` and polls the `prospecting-queue` task queue. Leave it running.
 
 ```bash
-# Terminal 1: worker. Keep it running; it polls the "prospecting-queue" task queue.
 cd app
 mvn compile exec:java -Dexec.mainClass=prospecting.ProspectingWorker
+```
 
-# Terminal 2: starter. It starts one workflow and prints its ID.
+Wait for `Worker started on task queue: prospecting-queue`.
+
+**Step 2: start the workflow (terminal 2).** The starter starts one `ProspectingWorkflow` with the goal "Book a demo meeting" and the guardrails "Email only, max 3 touches", then prints the workflow ID and UI link.
+
+```bash
 cd app
 mvn compile exec:java -Dexec.mainClass=prospecting.ProspectingStarter
 ```
 
-You can also run the two `main` methods from your IDE.
+You can also run the two `main` methods from your IDE, worker first.
 
-Then open http://localhost:8080, find the workflow `prospecting-contact-<timestamp>`, and open its **History** tab to see each activity and signal as an event. The worker terminal prints `[DB]`, `[ADK]`, `[ACTION]` and `[NOTIFY]` lines for each activity. These are stubs; only the Gemini call is real.
+**Step 3: watch it run.**
+- Terminal 1 prints `[DB]`, `[ADK]`, `[ACTION]` and `[NOTIFY]` lines as the workflow calls activities. These are stubs; only the Gemini call is real.
+- Open http://localhost:8080, find `prospecting-contact-<timestamp>`, and open its **History** tab to see each activity and signal as an event.
+- The agent usually sends an email and then waits (up to 3 days) for a reply. Wake it with a signal, as described below.
+
+If the Gemini call fails, the workflow ends in `FAILED`, so the Temporal flow is still visible.
 
 ### Send signals and query status
 
-The signal examples in `ProspectingStarter` are commented out. Uncomment them, or use the Temporal CLI (use the workflow ID the starter printed):
+Signals wake a waiting workflow, for example after a `WAIT` outcome. The worker must be running.
+
+**From the Temporal UI:**
+1. Open http://localhost:8080 and click your workflow (`prospecting-contact-<timestamp>`).
+2. Click **Send a Signal** (in newer UI versions it is under the **Actions** menu at the top right).
+3. Pick the signal name and enter the input as JSON, then submit.
+
+| Signal name | Input |
+|-------------|-------|
+| `onEmailReply` | `"Hi, interested! Can we chat?"` |
+| `onMeetingBooked` | `"meeting-xyz-999"` |
+| `onStepCompleted` | `"step-1"` |
+| `pause`, `resume`, `abort`, `takeOver` | none |
+
+A new **Signaled** event appears in the History tab, and the worker runs the next reasoning cycle. To read the status, use the **Queries** tab and run `getStatus`.
+
+**From the CLI** (use the workflow ID the starter printed):
 
 ```bash
 temporal workflow signal --workflow-id <id> --name onEmailReply --input '"Hi, interested!"'
 temporal workflow query  --workflow-id <id> --type getStatus
 ```
+
+**From code:** the signal examples in `ProspectingStarter` are commented out. Uncomment them to send signals when the starter runs.
 
 ## 2. What is Temporal?
 
