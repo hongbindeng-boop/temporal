@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api *)",
+      "Bash(javap *)",
+      "Bash(cp *)",
+      "Bash(mvn compile *)",
+      "Bash(mvn clean *)",
+      "Bash(mvn *)",
+      "Bash(xargs -I{} basename {})"
+    ]
+  }
+}
